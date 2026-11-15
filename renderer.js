@@ -1,11 +1,13 @@
 import {
   watchConnection, fbInit, fbLoadProfile, fbSaveProfile, fbUsernameFree, fbSignUp, fbSignIn, fbSignOut,
   fbSendReset, fbEmailVerified, fbResendVerification, fbGetUser, fbSendReport,
-  fbWatchNotices, fbClearNotice, fbWatchProfile, fbChangeUsername, fbLoadSettings,
-  fbSaveSettings, fbFinishProfile, withTimeout,
+  fbWatchNotices, fbClearNotice,
+  fbWatchProfile, fbChangeUsername,
+  fbLoadSettings, fbSaveSettings, fbFinishProfile, withTimeout,
   fbCreateRoom, fbJoinRoom, fbLeaveRoom, fbCleanup, fbSendMessage, fbWatchRoom, fbListRooms,
   fbChangePassword, fbChangeEmail, fbDeleteAccount, fbWatchStatus, fbWatchUser,
-  fbSweep, fbKickMember
+  fbSweep, fbKickMember,
+  pushSystem,
 } from './firebase.js';
 import {
   settings, save, THEMES, SIZES, applyTheme, applyColors, applyUi, applyPfps, applySize,
@@ -13,6 +15,7 @@ import {
 } from './settings.js';
 import { createGrid, scrollInto } from './ui.js';
 import { openEditor, closeEditor, editorKey } from './editor.js';
+import { createVoiceScreen } from './voicescreen.js';
 
 const $ = id => document.getElementById(id);
 
@@ -701,6 +704,12 @@ function renderChatHeader() {
   if (!room) return;
   const n = room.members ? Object.keys(room.members).length : 0;
   c.append(el('b', '', room.code), document.createTextNode('  ·  ' + room.type + '  ·  ' + n + '/' + room.limit + ' here'));
+  if (voiceState && voiceState.status === 'on') {
+    const flag = voiceState.deafened ? ' · deafened' : voiceState.muted ? ' · muted' : '';
+    const badge = el('span', 'vbadge' + (voiceState.muted ? ' mute' : ''), '[voice: ' + voiceState.people.length + flag + ' · F2]');
+    badge.addEventListener('click', () => { closeCard(); vc.open(); });
+    c.append(document.createTextNode('  ·  '), badge);
+  }
 }
 
 function startWatch() {
@@ -708,6 +717,7 @@ function startWatch() {
     onMessage: (key, m) => {
       const node = m.type === 'system' ? lineEl('[system]: ' + m.text) : msgEl(m);
       insertLine(node, key, m.ts, m.uid === me.uid);
+      if (current === 'voice' && m.type !== 'system' && m.uid !== me.uid) vc.bump();
     },
     onMembers: members => {
       room.members = members;
@@ -727,6 +737,7 @@ function restartWatch() {
   $('log').innerHTML = '';
   pinned = true;
   startWatch();
+  voice.rearm();
 }
 
 async function leaveCurrentRoom() {
@@ -850,6 +861,24 @@ function enterChat() {
   $('msg').focus();
 }
 
+function swapScreen(id) {
+  current = id;
+  document.querySelectorAll('.screen').forEach(s => s.hidden = s.id !== id);
+}
+
+function backToChat() {
+  if (!room || current !== 'voice') return;
+  swapScreen('chat');
+  pinned = true;
+  toBottom();
+  msgInput.focus();
+}
+
+function voiceCmd(fn) {
+  if (!voice.active) return addLocalLine('[system]: you are not in a voice call. type /voice to join.');
+  fn();
+}
+
 $('log').addEventListener('scroll', () => {
   const log = $('log');
   pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
@@ -864,8 +893,7 @@ const commands = {
   draw: { desc: 'draw something to send', run: () => openDrawPad() },
   gif: { desc: 'search for a gif (coming soon)', soon: true },
   kick: { desc: 'remove someone (room owner only)', hostOnly: true, run: arg => startKick(arg) },
-  voice: { desc: 'join a voice call (coming soon)', soon: true },
-  leave: { desc: 'leave the room', run: () => leaveCurrentRoom() },
+  voice: { desc: 'join the voice call, or open its screen', run: () => vc.start() },
 };
 
 let cmdMatches = [];
@@ -1136,6 +1164,7 @@ screens.chat = {
     if (e.key === 'PageUp') { e.preventDefault(); log.scrollBy({ top: -300 }); return; }
     if (e.key === 'PageDown') { e.preventDefault(); log.scrollBy({ top: 300 }); return; }
     if (e.key === 'End' && !msgInput.value) { e.preventDefault(); toBottom(); return; }
+    if (e.key === 'F2' && voice.active) { e.preventDefault(); closeCard(); vc.open(); return; }
     if (e.key === 'Escape') {
       if (chatUi.card) return closeCard();
       return leaveCurrentRoom();
@@ -1247,6 +1276,7 @@ function resetChatUi() {
   $('pv').hidden = true;
   $('rp').hidden = true;
   $('iv').hidden = true;
+  voice.leave();
   closeEditor();
 }
 
@@ -1704,13 +1734,14 @@ const changelog = {
     'A first-launch tutorial and a new boot screen',
     'Send pictures in chat, with a preview and a small editor (draw and crop)',
     'A drawing pad: /draw in chat, or draw your own profile picture and banner',
-    'Voice calls and /kick',
+    'Voice calls',
+    'Room commands',
   ],
   soon: [
     'Music player and sounds',
     'GIFs in chat',
     'More languages',
-    'The classic 1.0 look',
+    '1.0 appearance toggle',
   ],
   old: [
     { v: '1.5', notes: [
@@ -3758,6 +3789,22 @@ devBtn.addEventListener('click', e => {
 
 // ---------- start ----------
 applyTheme();
+let voiceState = null;
+let voiceSig = '';
+const vc = createVoiceScreen({
+  screens, $, el, frameEl, getUser, fillPfp, swapScreen, backToChat, me,
+  getRoom: () => room,
+  announce: text => { if (room) pushSystem(room.code, me.name, text); },
+  say: addLocalLine,
+  onState: s => {
+    const sig = s.status + '|' + s.people.length + '|' + s.muted + '|' + s.deafened;
+    const changed = sig !== voiceSig;
+    voiceState = s;
+    voiceSig = sig;
+    if (changed && room) renderChatHeader();
+  },
+});
+const voice = vc.voice;
 applyUi();
 if (firstRun) {
   $('splash-title').textContent = 'Welcome to TempTerm!';

@@ -350,7 +350,6 @@ function note(msg) {
 
 let lastKick = 0;
 
-// Resets a stalled connection. Safe to call often: it only acts once every 15 seconds.
 export function fbKick() {
   const now = Date.now();
   if (now - lastKick < 15000) return false;
@@ -381,7 +380,6 @@ export function withTimeout(promise, ms = 12000, label = '') {
     .finally(() => clearTimeout(timer));
 }
 
-// For safe-to-repeat writes: if the first try stalls, the connection is reset and it tries once more.
 async function retryOnce(make, ms, label) {
   try {
     return await withTimeout(make(), ms, label);
@@ -392,7 +390,7 @@ async function retryOnce(make, ms, label) {
   }
 }
 
-function pushSystem(code, name, text) {
+export function pushSystem(code, name, text) {
   return withTimeout(push(ref(db, `rooms/${code}/messages`), {
     uid: auth.currentUser.uid, name, type: 'system', text, ts: serverTimestamp(),
   }), 8000, 'systemMessage').catch(err => console.error('system message failed:', err));
@@ -457,7 +455,7 @@ async function joinInner(code, name, opts) {
       await set(ref(db, `rooms/${code}/slots/${key}`), uid);
       slot = key;
     } catch {
-      // someone took that seat at the same moment, try the next one
+
     }
   }
   if (!slot) return { error: 'room is full.' };
@@ -491,7 +489,6 @@ export function fbJoinRoom(code, name, opts = {}) {
   return withTimeout(joinInner(code, name, opts), 15000, 'joinRoom');
 }
 
-// Deletes everything about an empty room in ONE step, so a stall can't leave it half-deleted.
 export async function fbCleanup(code) {
   const members = await withTimeout(get(ref(db, `rooms/${code}/members`)), 8000, 'cleanup:members');
   if (members.exists()) return;
@@ -508,11 +505,12 @@ export async function fbCleanup(code) {
     ]), 8000, 'cleanup:lobby');
   }
 
-  // Only delete what exists: the rules refuse to delete something that isn't there.
   const updates = {
     [`rooms/${code}/messages`]: null,
     [`rooms/${code}/slots`]: null,
     [`rooms/${code}/kicked`]: null,
+    [`rooms/${code}/voice`]: null,
+    [`rooms/${code}/signal`]: null,
   };
   if (meta) updates[`rooms/${code}/meta`] = null;
   if (lobbySnap && lobbySnap.exists()) updates[`lobby/${lid}`] = null;
@@ -564,7 +562,6 @@ export async function fbLeaveRoom(code, name, lid, opts = {}) {
   catch (err) { console.warn('cleanup after leaving failed:', err.code || err.message); }
 }
 
-// The room owner removes someone. The rules only allow this for the owner of that room.
 export async function fbKickMember(code, uid, slot, lid, hostName, targetName) {
   const updates = {
     [`rooms/${code}/kicked/${uid}`]: true,
@@ -614,7 +611,6 @@ export async function fbListRooms() {
   return rooms.filter(r => r.count > 0);
 }
 
-// Janitor: removes rooms that nobody is in. Returns how many it found.
 export async function fbSweep() {
   const [lobbySnap, memSnap] = await withTimeout(Promise.all([get(ref(db, 'lobby')), get(ref(db, 'lobbyMembers'))]), 12000, 'sweep');
   const mem = memSnap.val() || {};
@@ -629,7 +625,6 @@ export async function fbSweep() {
   return empty.length;
 }
 
-// Console helpers. In the app, press Ctrl+Shift+I and type: copy(__tt.report())
 window.__tt = {
   offline: () => goOffline(db),
   online: () => goOnline(db),

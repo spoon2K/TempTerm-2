@@ -66,5 +66,12 @@ ipcMain.handle('pick-image', async event => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  session.defaultSession.setPermissionCheckHandler((wc, permission) => permission === 'media');
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const types = details.mediaTypes || [];
+    callback(!adminMode && permission === 'media' && types.length > 0 && types.every(t => t === 'audio'));
+  });
+  createWindow();
+});
 app.on('window-all-closed', () => app.quit());

@@ -1,6 +1,5 @@
 const PALETTE = ['#ffffff', '#000000', '#f87171', '#fb923c', '#facc15', '#4ade80', '#67e8f9', '#3b82f6', '#a78bfa', '#f472b6'];
 const BRUSH = [3, 7, 14];
-const PROFILE_BRUSH = [8, 18, 36];
 const DOTS = [6, 10, 15];
 const WORK_MAX = 1600;
 const OUT_MAX = 900;
@@ -84,8 +83,6 @@ export function openEditor(root, opts) {
     strokes: [], cur: null, tool: 'draw', color: '#f87171', size: 1,
     sel: null, drag: null,
     mode: opts.image ? 'preview' : 'edit',
-    profile: !!opts.profile,
-    bg: opts.blank ? opts.blank.bg : '#000000',
     fromPreview: !!opts.image,
     showFirst: !!opts.image && firstTime(),
     caption: '',
@@ -197,11 +194,8 @@ function buildEdit(s) {
 
   const tools = node('div', 'ie-group');
   s.toolBtns.draw = chip('✎ Draw', () => setTool(s, 'draw'));
-  tools.appendChild(s.toolBtns.draw);
-  if (!s.profile) {
-    s.toolBtns.crop = chip('⌗ Crop', () => setTool(s, 'crop'));
-    tools.appendChild(s.toolBtns.crop);
-  }
+  s.toolBtns.crop = chip('⌗ Crop', () => setTool(s, 'crop'));
+  tools.append(s.toolBtns.draw, s.toolBtns.crop);
 
   const paint = node('div', 'ie-group');
   PALETTE.forEach(c => {
@@ -237,18 +231,7 @@ function buildEdit(s) {
   const acts = node('div', 'ie-group');
   acts.append(chip('Undo', () => undo(s)), chip('Reset', () => reset(s)));
 
-  if (s.profile) {
-    const bgg = node('label', 'ie-bg', 'Background');
-    const bgp = node('input', 'ie-pick');
-    bgp.type = 'color';
-    bgp.value = s.bg;
-    bgp.tabIndex = -1;
-    bgp.addEventListener('input', () => setBackground(s, bgp.value));
-    bgg.appendChild(bgp);
-    top.append(tools, bgg, paint, acts);
-  } else {
-    top.append(tools, paint, acts);
-  }
+  top.append(tools, paint, acts);
 
   const stage = node('div', 'ie-stage');
   const view = node('canvas', 'ie-view');
@@ -266,10 +249,6 @@ function buildEdit(s) {
     s.cap = null;
     s.doneBtn = chip('Done (Enter)', () => backToPreview(s), 'go');
     bottom.appendChild(s.doneBtn);
-  } else if (s.profile) {
-    s.cap = null;
-    s.doneBtn = chip('Done (Enter)', () => doneNow(s), 'go');
-    bottom.append(s.doneBtn, chip('Cancel (Esc)', () => cancelNow(s)));
   } else {
     const cap = node('input', 'ie-cap');
     cap.type = 'text';
@@ -430,7 +409,7 @@ function bindPointer(s) {
     v.setPointerCapture(e.pointerId);
     const p = toBase(s, e);
     if (s.tool === 'draw') {
-      s.cur = { color: s.color, size: (s.profile ? PROFILE_BRUSH : BRUSH)[s.size], pts: [p] };
+      s.cur = { color: s.color, size: BRUSH[s.size], pts: [p] };
       strokeSeg(s, s.cur, 0);
       redraw(s);
     } else if (s.sel) {
@@ -473,15 +452,15 @@ function setTool(s, tool) {
   s.tool = tool;
   s.sel = tool === 'crop' ? fullSel(s) : null;
   s.toolBtns.draw.classList.toggle('sel', tool === 'draw');
-  if (s.toolBtns.crop) s.toolBtns.crop.classList.toggle('sel', tool === 'crop');
+  s.toolBtns.crop.classList.toggle('sel', tool === 'crop');
   s.paint.style.visibility = tool === 'draw' ? 'visible' : 'hidden';
   s.applyRow.style.display = tool === 'crop' ? 'flex' : 'none';
   if (s.doneBtn) s.doneBtn.style.display = tool === 'crop' ? 'none' : '';
   s.view.style.cursor = tool === 'draw' ? 'crosshair' : 'crosshair';
   s.hint.textContent = tool === 'crop'
     ? 'drag the edges or corners to crop | drag inside to move it | Enter = apply | Esc = cancel the crop'
-    : 'drag on the picture to draw | 1 2 3 = brush size | Z = undo | ' + (s.profile ? '' : 'C = crop | ') +
-      (s.fromPreview ? 'Enter = done | Esc = back' : s.profile ? 'Enter = done | Esc = cancel' : 'Enter = send | Esc = cancel | Tab = write a comment');
+    : 'drag on the picture to draw | 1 2 3 = brush size | Z = undo | C = crop | ' +
+      (s.fromPreview ? 'Enter = done | Esc = back' : 'Enter = send | Esc = cancel | Tab = write a comment');
   say(s, '', false);
   redraw(s);
 }
@@ -561,24 +540,6 @@ function exportUrl(s) {
   return null;
 }
 
-function setBackground(s, c) {
-  s.bg = c;
-  [s.base, s.original].forEach(cv => {
-    const x = cv.getContext('2d');
-    x.fillStyle = c;
-    x.fillRect(0, 0, cv.width, cv.height);
-  });
-  redraw(s);
-}
-
-function doneNow(s) {
-  const c = makeCanvas(s.base.width, s.base.height);
-  const x = c.getContext('2d');
-  x.drawImage(s.base, 0, 0);
-  x.drawImage(s.ink, 0, 0);
-  s.opts.onDone(c);
-}
-
 function sendNow(s) {
   const url = exportUrl(s);
   if (!url) return say(s, 'that picture is too detailed to send. try cropping it.', true);
@@ -618,7 +579,6 @@ function editKey(s, e) {
     e.preventDefault();
     if (s.tool === 'crop') applyCrop(s);
     else if (s.fromPreview) backToPreview(s);
-    else if (s.profile) doneNow(s);
     else sendNow(s);
   } else if (key === 'Escape') {
     e.preventDefault();
@@ -630,7 +590,7 @@ function editKey(s, e) {
     undo(s);
   } else if (lk === 'd') {
     setTool(s, 'draw');
-  } else if (lk === 'c' && !s.profile) {
+  } else if (lk === 'c') {
     setTool(s, 'crop');
   } else if (key >= '1' && key <= '3') {
     setSize(s, Number(key) - 1);
